@@ -4,6 +4,7 @@ import argparse
 import base64
 import configparser
 import errno
+import os
 from io import BytesIO
 import json
 import logging
@@ -258,7 +259,7 @@ class UVTTFile(object):
 
     def __init__(self, filepath: Path, portalWidthAdjustment: str, portalLengthAdjustment: str, *args, **kwargs):
         self.filepath = filepath
-        with self.filepath.open(mode='r') as f:
+        with open(self.filepath, mode='r') as f:
             self.data = json.load(f)
 
         mapsize = self.data['resolution']['map_size']
@@ -407,7 +408,7 @@ class UVTTFile(object):
 
     def writePng(self, filepath: Path) -> None:
         '''Write the image out as a .png file'''
-        with filepath.open(mode='wb') as f:
+        with open(filepath, mode='wb') as f:
             f.write(self.image)
 
     def writeJpg(self, filepath: Path) -> None:
@@ -426,51 +427,35 @@ class UVTTFile(object):
         xmlTree = self.composeXml()
         xmlStr = minidom.parseString(
             ET.tostring(xmlTree)).toprettyxml(indent="  ")
-        with filepath.open('w') as f:
+        with open(filepath, 'w') as f:
             f.write(xmlStr)
 
 
-def processFile(filepaths: Tuple[Path, Path, Path, Path], portalWidthAdjustment: str, portalLengthAdjustment: str) -> None:
+def processFile(uvttpath,  portalwidth, portallength) -> None:
     '''Process an individual Universal VTT file'''
-    (uvttpath, pngpath, jpgpath, xmlpath) = filepaths
 
     logging.info('Processing {}'.format(uvttpath))
-    uvttfile = UVTTFile(uvttpath, portalWidthAdjustment,
-                        portalLengthAdjustment)
+    uvttfile = UVTTFile(uvttpath, portalwidth,
+                        portallength)
 
     logging.debug('  Map dimensions: {} grid elements'.format(
         uvttfile.resolution))
     logging.debug('  Grid Size: {} pixels'.format(uvttfile.gridsize))
 
     if configData.writepng:
-        logging.info('  Writing {}'.format(pngpath))
-        uvttfile.writePng(pngpath)
+        logging.info('  Writing {}'.format(configData.pngpath))
+        uvttfile.writePng(configData.pngpath)
 
     if configData.writejpg:
-        logging.info('  Writing {}'.format(jpgpath))
-        uvttfile.writeJpg(jpgpath)
+        logging.info('  Writing {}'.format(configData.jpgpath))
+        uvttfile.writeJpg(configData.jpgpath)
 
-    logging.info('  Writing {}'.format(xmlpath))
-    uvttfile.writeXml(xmlpath)
+    logging.info('  Writing {}'.format(configData.xmlpath))
+    uvttfile.writeXml(configData.xmlpath)
 
     if configData.remove:
         remove(uvttpath)
-
-
-def composeFilePaths(filepath: Path) -> Tuple[Path, Path, Path, Path]:
-    '''Take the input filepath and output the full set of input and output paths
-
-    The returned tuple is the input uvtt file, the output png path, the output
-    jpg path, and the output xml path.
-    '''
-    vttpath = filepath
-
-    pngpath = Path.joinpath(Path(configData.pngpath), filepath.with_suffix('.png').name)
-    jpgpath = Path.joinpath(Path(configData.jpgpath), filepath.with_suffix('.jpg').name)
-    xmlpath = Path.joinpath(Path(configData.xmlpath), filepath.with_suffix('.xml').name)
-
-    return (vttpath, pngpath, jpgpath, xmlpath)
-
+    print("Done")
 
 class PortalAdjust(argparse.Action):
     '''Parse the command-line arguments to verify that it is either a percentage, or a pixel count'''
@@ -490,76 +475,50 @@ class PortalAdjust(argparse.Action):
 
         setattr(namespace, self.dest, values)
 
-
-def init_argparse() -> argparse.ArgumentParser:
-    '''Set up the command-line argument parser'''
-    parser = argparse.ArgumentParser(
-        usage='%(prog)s [OPTIONS] [FILES]',
-        description='Convert Dungeondraft .dd2vtt files to .jpg/.png/.xml for Fantasy Grounds Unity (FGU)'
-    )
-    parser.add_argument(
-        '-c', '--config', help='Configuration file'
-    )
-    parser.add_argument(
-        '-f', '--force', help='Force overwrite destination files', action='store_true'
-    )
-    parser.add_argument(
-        '-l', '--log', dest='logLevel', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level'
-    )
-    parser.add_argument(
-        '-o', '--output', help='Path to the output directory'
-    )
-    parser.add_argument(
-        '--portalwidth', help='Width of portals', default='25%'
-    )
-    parser.add_argument(
-        '--portallength', help='Additional length to add to portals', default="0px"
-    )
-    parser.add_argument(
-        '-r', '--remove', help='Remove the input dd2vtt file after conversion'
-    )
-    parser.add_argument(
-        '-v', '--version', action='version', version=f'{parser.prog} version 1.5.1'
-    )
-    parser.add_argument('files', nargs='*',
-                        help='Files to convert to .png + .xml for FGU')
-    return parser
-
-def loadConfigData(configFile: str) -> None:
+def loadConfigData(configFile: str=False) -> None:
     global configData
     configData = ConfigFileData(configFile)
 
-def main() -> int:
-    parser = init_argparse()
-    args = parser.parse_args()
+def converter(file, output, name,
+            max_image_filesize=89478485,
+            objects_are_terrain=True, remove=False,
+            force=False, jpg_optimize=True,
+            jpg_quality=75, jpg_subsampling=2,
+            write_jpg=True, write_png=True, 
+            jpgpath=False, pngpath=False, xmlpath=False,
+            portalwidth="25%", portallength="0px"):
+    
     exitcode = 0
 
     logging.basicConfig(format='%(message)s')
 
-    if args.logLevel:
-        logging.getLogger().setLevel(getattr(logging, args.logLevel))
+    logging.getLogger().setLevel(1)
 
-    loadConfigData(args.config)
+    loadConfigData()
 
-    # Merge the config file with the command-line arguments
-    if args.output:
-        configData.xmlpath = args.output
-        configData.pngpath = args.output
-        configData.jpgpath = args.output
+    configData.xmlpath = xmlpath
+    configData.pngpath = pngpath
+    configData.jpgpath = jpgpath
+
+    configData.jpgQuality = jpg_quality
+    configData.jpgSubsampling = jpg_subsampling
+    configData.jpgOptimize = jpg_optimize
+
+    configData.objectsAreTerrain = objects_are_terrain
+
+    configData.writepng = write_png
+    configData.writejpg = write_jpg
+
     if not configData.xmlpath:
-        configData.xmlpath = '.'
+        configData.xmlpath = output
     if not configData.pngpath:
-        configData.pngpath = '.'
+        configData.pngpath = output
     if not configData.jpgpath:
-        configData.jpgpath = '.'
-    if args.force:
-        configData.forceOverwrite = args.force
-    if not configData.forceOverwrite:
-        configData.forceOverwrite = False
-    if args.remove:
-        configData.remove = args.remove
-    if not configData.remove:
-        configData.remove = False
+        configData.jpgpath = output
+
+    configData.forceOverwrite = force
+
+    configData.remove = remove
 
     # Verify that the destination directories exist (if we are writing that
     # file)
@@ -572,46 +531,33 @@ def main() -> int:
     if not Path(configData.jpgpath).exists() and configData.writejpg:
         logging.error('{}: No such file or directory'.format(configData.jpgpath))
         return errno.ENOENT
+    
+    configData.maxImageFileSize = max_image_filesize
+    if configData.maxImageFileSize == 0:
+        Image.MAX_IMAGE_PIXELS = None
+    else:
+        Image.MAX_IMAGE_PIXELS = int(configData.maxImageFileSize)
 
-    if not args.files:
-        if not configData.alllocaldd2vttfiles:
-            logging.warning('No files specified')
-            return errno.EINVAL
-        else:
-            cwd = Path('.')
-            args.files = list(cwd.glob('*.dd2vtt'))
+    filepath = file
 
-    if configData.maxImageFileSize is not None:
-        if configData.maxImageFileSize == 0:
-            Image.MAX_IMAGE_PIXELS = None
-        else:
-            Image.MAX_IMAGE_PIXELS = int(configData.maxImageFileSize)
+    configData.pngpath = f"{configData.pngpath}\\{name}.png"
+    configData.jpgpath = f"{configData.jpgpath}\\{name}.jpg"
+    configData.xmlpath = f"{configData.xmlpath}\\{name}.xml"
 
-    for filename in args.files:
-        filepaths = composeFilePaths(Path(filename))
+    # Verify that the source file exists, and the destination path exists
+    if os.path.isfile(configData.xmlpath):
+        logging.error(
+            '{}: No such file or directory, skipping'.format(configData.xmlpath))
+        exitcode = errno.ENOENT
+  
 
-        # Verify that the source file exists, and the destination path exists
-        if not filepaths[0].exists():
-            logging.error(
-                '{}: No such file or directory, skipping'.format(filepaths[0]))
-            exitcode = errno.ENOENT
-            continue
+    if not configData.forceOverwrite:
+        if os.path.isfile(configData.xmlpath):
+                logging.error(
+                    '{}: file already exists, skipping'.format(configData.xmlpath))
+                exitcode = errno.EEXIST
 
-        if not configData.forceOverwrite:
-            for filepath in filepaths[1:]:
-                if filepath.exists():
-                    logging.error(
-                        '{}: file already exists, skipping'.format(filepath))
-                    exitcode = errno.EEXIST
-                    continue
+        if exitcode:
+            return exitcode
 
-            if exitcode:
-                return exitcode
-
-        processFile(filepaths, args.portalwidth, args.portallength)
-
-    return exitcode
-
-
-if __name__ == '__main__':
-    sys.exit(main())
+    processFile(filepath, portalwidth, portallength)
